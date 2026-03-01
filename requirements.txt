@@ -1,4 +1,3 @@
 DrissionPage
 pydub
 SpeechRecognition
-requests

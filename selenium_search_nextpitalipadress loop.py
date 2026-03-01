@@ -2,13 +2,13 @@
 Selenium script: loop N times, each time search a keyword on Google,
 find Nextpital and click it. Each run can use a different proxy (IP).
 
-- Search: Google only. If Google shows CAPTCHA, script tries audio solver then 2Captcha then waits.
+- Search: Google only. If Google shows CAPTCHA, script uses audio reCAPTCHA solver (audio challenge + speech recognition).
 - Proxies: put in proxies.txt or proxies_maroc.txt (http:// or socks5:// USER:PASS@HOST:PORT).
 - For proxies with auth we run pproxy as local proxy so Chrome sees no login dialog.
 
 Requirements:
   pip install selenium pproxy undetected-chromedriver
-  For audio reCAPTCHA solver (optional): pip install pydub SpeechRecognition — and install ffmpeg.
+  For audio reCAPTCHA solver: pip install pydub SpeechRecognition — and install ffmpeg.
   Chrome browser must be installed.
 
 --- Run automatically on a VPS (no screen) ---
@@ -18,14 +18,7 @@ Requirements:
 
 --- If CAPTCHA keeps appearing (from web research) ---
 Google flags: same device fingerprint, automation signals (Selenium), and sometimes IP.
-We already: rotate proxies, fresh Chrome profile per run, varied window/fingerprint, human delays.
-Further options:
-  1) On VPS when audio gets "bot detected": use 2Captcha. Add key to .2captcha_key (or env CAPTCHA_2CAPTCHA_KEY);
-     script auto-uses 2Captcha when key is set. pip install requests.
-  2) Solve manually: when the script says "Solve it in the browser...", solve and press Enter.
-  3) Other CAPTCHA APIs: CapSolver, Anti-Captcha (would need integration).
-  4) Try Playwright instead of Selenium: often less detected (pip install playwright playwright-stealth).
-  5) Use a "Web Unblocker" / scraping API (e.g. Oxylabs) that handles blocks for you.
+We use: audio reCAPTCHA solver (no paid API). If audio gets "bot detected" on VPS, try VNC + desktop (see VPS_GUI.md) or solve manually when prompted.
 """
 
 import os
@@ -67,17 +60,7 @@ USE_HTTPS_PROXY_UPSTREAM = False
 # If no proxies in file, fetch real proxy IPs from a free list (optional; quality varies)
 FETCH_FREE_PROXIES = False
 FREE_PROXY_COUNT = 10
-# 2Captcha: when key is set, use paid 2Captcha API when audio solver fails (e.g. "bot detected" on VPS).
-# Set to False to disable even if key exists. Key: env CAPTCHA_2CAPTCHA_KEY or .2captcha_key file.
-CAPTCHA_2CAPTCHA_KEY = os.environ.get("CAPTCHA_2CAPTCHA_KEY", "").strip()
-if not CAPTCHA_2CAPTCHA_KEY:
-    _key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".2captcha_key")
-    if os.path.isfile(_key_path):
-        with open(_key_path, "r") as _f:
-            CAPTCHA_2CAPTCHA_KEY = _f.read().strip()
-USE_2CAPTCHA = bool(CAPTCHA_2CAPTCHA_KEY)
-
-# Audio reCAPTCHA solver (same approach as RecaptchaSolver: audio challenge + speech recognition)
+# Audio reCAPTCHA solver (audio challenge + speech recognition, no paid API)
 # Requires: pydub, SpeechRecognition, ffmpeg. Install with: pip install pydub SpeechRecognition
 try:
     from RecaptchaSolverSelenium import RecaptchaSolverSelenium
@@ -436,98 +419,6 @@ def _is_google_captcha_page(driver):
         return False
 
 
-def _get_recaptcha_sitekey_from_page(driver):
-    """Try to extract reCAPTCHA site key from current page (data-sitekey or k= in scripts)."""
-    try:
-        html = driver.page_source or ""
-        # data-sitekey="6L..."
-        m = re.search(r'data-sitekey\s*=\s*["\']([a-zA-Z0-9_-]{20,})["\']', html, re.I)
-        if m:
-            return m.group(1)
-        m = re.search(r'["\'](6L[a-zA-Z0-9_-]{38,})["\']', html)
-        if m:
-            return m.group(1)
-        m = re.search(r'sitekey["\']?\s*[:=]\s*["\']([^"\']+)["\']', html, re.I)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return None
-
-
-def _solve_captcha_2captcha(driver):
-    """Use 2Captcha API to get reCAPTCHA token and inject it. Returns True if solved."""
-    try:
-        import requests as _req
-    except ImportError:
-        return False
-    key = CAPTCHA_2CAPTCHA_KEY
-    if not key:
-        return False
-    url = driver.current_url or ""
-    if "google.com" not in url:
-        return False
-    sitekey = _get_recaptcha_sitekey_from_page(driver)
-    if not sitekey:
-        _log("  2Captcha: could not find reCAPTCHA site key on page.")
-        return False
-    _log("  2Captcha: sending CAPTCHA to solver (sitekey=%s...)." % sitekey[:12])
-    # Create task (2Captcha API v2)
-    create = _req.post(
-        "https://api.2captcha.com/createTask",
-        json={
-            "clientKey": key,
-            "task": {
-                "type": "RecaptchaV2TaskProxyless",
-                "websiteURL": url,
-                "websiteKey": sitekey,
-            },
-        },
-        timeout=30,
-    ).json()
-    if create.get("errorId") != 0:
-        _log("  2Captcha createTask error: %s" % create.get("errorDescription", create))
-        return False
-    task_id = create.get("taskId")
-    if not task_id:
-        return False
-    # Poll for result (max ~2 min)
-    for _ in range(24):
-        time.sleep(5)
-        result = _req.post(
-            "https://api.2captcha.com/getTaskResult",
-            json={"clientKey": key, "taskId": task_id},
-            timeout=30,
-        ).json()
-        if result.get("errorId") != 0:
-            _log("  2Captcha getTaskResult error: %s" % result.get("errorDescription", result))
-            return False
-        if result.get("status") == "ready":
-            token = (result.get("solution") or {}).get("gRecaptchaResponse") or result.get("solution", {}).get("token")
-            if not token:
-
-                return False
-            _log("  2Captcha: got token, injecting...")
-            # Inject token and submit (Google sorry page) — pass token as script arg to avoid escaping
-            try:
-                driver.execute_script("""
-                    var token = arguments[0];
-                    var textarea = document.getElementById('g-recaptcha-response') || document.querySelector('[name="g-recaptcha-response"]');
-                    if (textarea) { textarea.innerHTML = token; textarea.value = token; }
-                    var f = document.querySelector('form');
-                    if (f) f.submit();
-                """, token)
-            except Exception as e:
-                _log("  2Captcha inject error: %s" % (str(e)[:50]))
-            time.sleep(2)
-            return True
-        if result.get("status") == "processing":
-            continue
-        break
-    _log("  2Captcha: timeout waiting for solution.")
-    return False
-
-
 def _solve_captcha_audio(driver):
     """Try to solve reCAPTCHA via audio challenge + speech recognition (same way as RecaptchaSolver). Returns True if solved."""
     if not AUDIO_CAPTCHA_AVAILABLE or RecaptchaSolverSelenium is None:
@@ -560,7 +451,7 @@ if _captcha_timeout_env != "":
         CAPTCHA_AUTO_WAIT_TIMEOUT_SEC = int(_captcha_timeout_env)
     except ValueError:
         pass
-CAPTCHA_RETRY_SOLVER_EVERY_SEC = 12   # while waiting, retry audio/2Captcha every N seconds
+CAPTCHA_RETRY_SOLVER_EVERY_SEC = 12   # while waiting, retry audio solver every N seconds
 
 
 def _wait_for_possible_second_captcha(driver):
@@ -575,13 +466,12 @@ def _wait_for_possible_second_captcha(driver):
 
 
 def _wait_for_google_captcha_solve(driver):
-    """If Google shows CAPTCHA, try audio solver, then 2Captcha; then wait automatically until captcha is gone (no user input)."""
+    """If Google shows CAPTCHA, try audio solver (reCAPTCHA audio + speech recognition); then wait/retry until captcha is gone."""
     for attempt in range(1, MAX_CAPTCHA_SOLVE_ATTEMPTS + 1):
         if not _is_google_captcha_page(driver):
             return None
         if attempt > 1:
             _log("Another CAPTCHA detected (attempt %d/%d). Solving again..." % (attempt, MAX_CAPTCHA_SOLVE_ATTEMPTS))
-        # 1) Try in-browser audio solver first
         if AUDIO_CAPTCHA_AVAILABLE:
             _log("Google CAPTCHA detected. Trying audio solver (reCAPTCHA audio challenge)...")
             if _solve_captcha_audio(driver):
@@ -589,21 +479,13 @@ def _wait_for_google_captcha_solve(driver):
                 if not _wait_for_possible_second_captcha(driver):
                     return None
                 continue
-            _log("  Audio solver failed or not available. Trying next option.")
-        if USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
-            _log("Google CAPTCHA detected. Trying 2Captcha...")
-            if _solve_captcha_2captcha(driver):
-                _log("  2Captcha solved. Waiting for page to reload...")
-                if not _wait_for_possible_second_captcha(driver):
-                    return None
-                continue
-            _log("  2Captcha failed or unavailable.")
-        # When timeout is 0: don't wait, continue to next run (e.g. VPS where audio always "bot detected")
+            _log("  Audio solver failed or not available.")
+        # When timeout is 0: don't wait, continue to next run (e.g. VPS where audio gets "bot detected")
         if CAPTCHA_AUTO_WAIT_TIMEOUT_SEC <= 0:
             _log("CAPTCHA not solved. Skipping wait (timeout=0). Continuing to next run.")
             return None
-        # Wait and periodically retry solvers (so second captcha that loads later gets solved automatically)
-        _log("Waiting for CAPTCHA (retrying solver every %ds, timeout %ds)..." % (CAPTCHA_RETRY_SOLVER_EVERY_SEC, CAPTCHA_AUTO_WAIT_TIMEOUT_SEC))
+        # Wait and periodically retry audio solver
+        _log("Waiting for CAPTCHA (retrying audio solver every %ds, timeout %ds)..." % (CAPTCHA_RETRY_SOLVER_EVERY_SEC, CAPTCHA_AUTO_WAIT_TIMEOUT_SEC))
         deadline = time.time() + CAPTCHA_AUTO_WAIT_TIMEOUT_SEC
         last_solver_try = 0
         solved_during_wait = False
@@ -614,12 +496,6 @@ def _wait_for_google_captcha_solve(driver):
                 if AUDIO_CAPTCHA_AVAILABLE:
                     _log("  Retrying audio solver...")
                     if _solve_captcha_audio(driver):
-                        _log("  Solved. Waiting for page to reload...")
-                        solved_during_wait = True
-                        break
-                if not solved_during_wait and USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
-                    _log("  Retrying 2Captcha...")
-                    if _solve_captcha_2captcha(driver):
                         _log("  Solved. Waiting for page to reload...")
                         solved_during_wait = True
                         break

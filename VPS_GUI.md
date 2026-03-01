@@ -1,16 +1,6 @@
 # Run with a real GUI on the VPS (like your laptop)
 
-If the script keeps getting **"bot detected"** on the VPS (no real display), you have two options:
-
-1. **2Captcha (paid API, no VNC needed)** – Reliable way to solve reCAPTCHA on the VPS without a desktop. Get an API key from [2captcha.com](https://2captcha.com), then on the VPS:
-   ```bash
-   cd ~/paython_ranking
-   echo "YOUR_2CAPTCHA_API_KEY" > .2captcha_key
-   chmod 600 .2captcha_key
-   ```
-   When the audio solver fails, the script will automatically use 2Captcha and inject the token. Install `requests` if needed: `pip install requests`.
-
-2. **VNC + desktop (below)** – Install a lightweight desktop + VNC so Chrome runs in a real window, like on your laptop.
+If the script keeps getting **"bot detected"** on the VPS (no real display), you can install a **lightweight desktop + VNC** so Chrome runs in a real window. Then run the script **from inside that desktop** — same as on your laptop (audio reCAPTCHA solver works better with a real display).
 
 ---
 
