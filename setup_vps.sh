@@ -27,19 +27,19 @@ if [ -f /etc/debian_version ]; then
     sudo apt-get install -y chromium-browser || sudo apt-get install -y chromium
   fi
 
-  # Python, venv, pip, ffmpeg (for audio captcha solver)
-  echo "Installing Python, ffmpeg..."
-  sudo apt-get install -y python3 python3-venv python3-pip ffmpeg
+  # Python, venv, pip, ffmpeg (for audio captcha solver), xvfb (virtual display = laptop-like, audio solver works)
+  echo "Installing Python, ffmpeg, xvfb..."
+  sudo apt-get install -y python3 python3-venv python3-pip ffmpeg xvfb
 
   echo ""
   echo "Done. Chrome/Chromium and dependencies are installed."
   echo "Next: copy this project to the VPS, then run:"
-  echo "  cd /path/to/GoogleRecaptchaBypass-main"
+  echo "  cd /path/to/paython_ranking"
   echo "  python3 -m venv .venv"
   echo "  .venv/bin/pip install -r requirements.txt"
   echo "  .venv/bin/pip install selenium pproxy undetected-chromedriver pydub SpeechRecognition"
-  echo "  # In the script set RUN_HEADLESS = True, then:"
-  echo "  ./run_on_vps.sh"
+  echo "  chmod +x run_on_vps.sh && ./run_on_vps.sh"
+  echo "  (xvfb is used automatically so Chrome runs like on your laptop and audio CAPTCHA can work)"
 else
   echo "This script is for Debian/Ubuntu. On other distros install Chrome or Chromium and: python3, python3-venv, ffmpeg."
   exit 1

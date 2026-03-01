@@ -1,16 +1,19 @@
 #!/bin/bash
-# Run the search loop on a VPS (no display). Logs to run_on_vps.log.
-# 1. In selenium_search_nextpitalipadress loop.py set: RUN_HEADLESS = True
-# 2. Install on VPS: Chrome (or Chromium), Python 3, pip, ffmpeg; create venv and install deps.
-# 3. Run: ./run_on_vps.sh   or: nohup ./run_on_vps.sh &   (keeps running after you disconnect)
+# Run the search loop on a VPS. Logs to run_on_vps.log.
+# If xvfb is installed, uses virtual display so Chrome runs like on a laptop (audio CAPTCHA solver can work).
+# Otherwise runs Chrome headless (CAPTCHA often "bot detected" on headless).
 
 cd "$(dirname "$0")"
 SCRIPT="selenium_search_nextpitalipadress loop.py"
 LOG="run_on_vps.log"
 PY="${PYTHON:-.venv/bin/python}"
 
-# Force headless so Chrome runs without a display (avoids "Chrome instance exited" on VPS)
-export RUN_HEADLESS=1
+# Use virtual display when possible (no real DISPLAY) so Chrome runs non-headless = laptop-like, audio solver works
+if [ -z "$DISPLAY" ] && command -v xvfb-run &>/dev/null; then
+  exec xvfb-run -a "$0"
+fi
+# Only force headless when there is no display (and we're not under xvfb)
+[ -z "$DISPLAY" ] && export RUN_HEADLESS=1
 
 if [ ! -x "$PY" ]; then
   echo "Python not found at $PY. Use: PYTHON=/path/to/python ./run_on_vps.sh"
