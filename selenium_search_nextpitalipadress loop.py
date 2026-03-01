@@ -256,6 +256,10 @@ def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True
             pass
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    if RUN_HEADLESS:
+        options.add_argument("--disable-setuid-sandbox")
+        options.add_argument("--no-first-run")
+        options.add_argument("--disable-extensions")
     if add_stealth_options:
         options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--disable-gpu")
@@ -287,7 +291,7 @@ def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True
             else:
                 options.add_argument("--proxy-server=http://%s" % host_port)
                 _log("Using proxy: %s" % host_port)
-    else:
+    elif not RUN_HEADLESS:
         options.add_argument("--disable-extensions")
     return options
 

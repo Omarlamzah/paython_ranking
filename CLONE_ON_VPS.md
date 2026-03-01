@@ -94,11 +94,32 @@ Paste one proxy per line, e.g.:
 ```
 socks5://YOUR_USER:sgtmg56wzp7i@p.webshare.io:80
 ```
-Save (Ctrl+O, Enter, Ctrl+X). Or copy the file from your laptop with scp.
+Save (Ctrl+O, Enter, Ctrl+X). Or copy the file from your laptop with scp. Use **http://** (not socks5) for Webshare backbone proxies.
 
 ---
 
-## 7. Run the script
+## 7. If you see "Chrome instance exited" or "session not created"
+
+Chrome headless often needs extra libraries on the VPS. Install them:
+
+```bash
+apt-get update
+apt-get install -y libgbm1 libnss3 libatk1.0-0 libatk-bridge2.0-0 libcups2 libdrm2 libxkbcommon0 libxcomposite1 libxdamage1 libxfixes3 libxrandr2 libasound2
+```
+
+If Chrome still exits, try Chromium instead:
+
+```bash
+apt-get install -y chromium-browser
+# Or on some systems:
+apt-get install -y chromium
+```
+
+Then run the script again.
+
+---
+
+## 8. Run the script
 
 ```bash
 chmod +x run_on_vps.sh
