@@ -66,8 +66,9 @@ USE_HTTPS_PROXY_UPSTREAM = False
 # If no proxies in file, fetch real proxy IPs from a free list (optional; quality varies)
 FETCH_FREE_PROXIES = False
 FREE_PROXY_COUNT = 10
-# 2Captcha API key: set CAPTCHA_2CAPTCHA_KEY env var, or put key in .2captcha_key in this folder (no quotes)
-# Get key at https://2captcha.com/enterpage — then: export CAPTCHA_2CAPTCHA_KEY=your_key
+# 2Captcha: set to True only if you want to use the paid 2Captcha API. Otherwise disabled (no API calls).
+USE_2CAPTCHA = False
+# 2Captcha API key (only used when USE_2CAPTCHA is True): env CAPTCHA_2CAPTCHA_KEY or .2captcha_key file
 CAPTCHA_2CAPTCHA_KEY = os.environ.get("CAPTCHA_2CAPTCHA_KEY", "").strip()
 if not CAPTCHA_2CAPTCHA_KEY:
     _key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".2captcha_key")
@@ -582,7 +583,7 @@ def _wait_for_google_captcha_solve(driver):
                     return None
                 continue
             _log("  Audio solver failed or not available. Trying next option.")
-        if CAPTCHA_2CAPTCHA_KEY:
+        if USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
             _log("Google CAPTCHA detected. Trying 2Captcha...")
             if _solve_captcha_2captcha(driver):
                 _log("  2Captcha solved. Waiting for page to reload...")
@@ -605,7 +606,7 @@ def _wait_for_google_captcha_solve(driver):
                         _log("  Solved. Waiting for page to reload...")
                         solved_during_wait = True
                         break
-                if not solved_during_wait and CAPTCHA_2CAPTCHA_KEY:
+                if not solved_during_wait and USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
                     _log("  Retrying 2Captcha...")
                     if _solve_captcha_2captcha(driver):
                         _log("  Solved. Waiting for page to reload...")
