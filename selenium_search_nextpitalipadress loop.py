@@ -37,6 +37,7 @@ import time
 import urllib.request
 from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.common.action_chains import ActionChains
@@ -218,6 +219,31 @@ def _parse_proxy(proxy_url):
     return u.strip(), None, None
 
 
+def _find_chrome_binary():
+    """On Linux (e.g. VPS), find Chrome/Chromium binary so ChromeDriver uses it. Returns path or None."""
+    if not sys.platform.startswith("linux"):
+        return None
+    candidates = [
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/chromium",
+    ]
+    for path in candidates:
+        if os.path.isfile(path) and os.access(path, os.X_OK):
+            return path
+    try:
+        for name in ("google-chrome", "google-chrome-stable", "chromium-browser", "chromium"):
+            out = subprocess.check_output(["which", name], stderr=subprocess.DEVNULL, timeout=2)
+            if out:
+                path = out.decode("utf-8", errors="ignore").strip().split("\n")[0]
+                if path and os.path.isfile(path):
+                    return path
+    except Exception:
+        pass
+    return None
+
+
 def _apply_stealth_cdp(driver):
     """Reduce automation detection; vary fingerprint slightly per run (same laptop looks less identical)."""
     try:
@@ -249,6 +275,10 @@ def _apply_stealth_cdp(driver):
 def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True, user_data_dir=None):
     """Build ChromeOptions. user_data_dir = fresh profile per run (no cookies/history, less "same device" detection)."""
     options = webdriver.ChromeOptions()
+    # On VPS/Linux, set Chrome binary explicitly so ChromeDriver finds it (avoids "Chrome instance exited")
+    chrome_bin = _find_chrome_binary()
+    if chrome_bin:
+        options.binary_location = chrome_bin
     if user_data_dir:
         options.add_argument("--user-data-dir=%s" % user_data_dir)
     if add_stealth_options:
@@ -271,6 +301,7 @@ def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True
         options.add_argument("--headless=new")
         options.add_argument("--disable-software-rasterizer")
         options.add_argument("--remote-debugging-port=0")
+        options.add_argument("--disable-features=VizDisplayCompositor")
         options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         w, h = 1920, 1080
     else:
@@ -311,24 +342,49 @@ def create_chrome_driver(proxy=None):
     # Fresh profile per run: no cookies, no history — each run looks like a new device/session
     user_data_dir = tempfile.mkdtemp(prefix="chrome_run_")
     options_fallback = _build_chrome_options(proxy=proxy, pproxy_port=pproxy_port, add_stealth_options=False, user_data_dir=user_data_dir)
-    if use_uc:
-        try:
-            # Minimal options only (no excludeSwitches) so UC works on Chrome builds that reject them
-            import undetected_chromedriver as uc
-            driver = uc.Chrome(options=options_fallback)
-            _apply_stealth_cdp(driver)
-            _log("Chrome started (undetected mode for Google).")
-        except Exception as e:
-            err_msg = (str(e).split("\n")[0] or str(e))[:80]
-            _log("undetected_chromedriver failed (%s), using standard Chrome." % err_msg)
-            driver = webdriver.Chrome(options=options_fallback)
-            _apply_stealth_cdp(driver)
-            _log("Chrome started.")
-    else:
-        driver = webdriver.Chrome(options=options_fallback)
+
+    def _create(opts):
+        # ChromeDriver log on VPS so we can see why Chrome exited (see chromedriver.log in project dir)
+        service_kw = {}
+        if RUN_HEADLESS:
+            log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chromedriver.log")
+            service_kw["log_output"] = log_path
+        service = Service(**service_kw) if service_kw else None
+        if use_uc:
+            try:
+                import undetected_chromedriver as uc
+                return uc.Chrome(options=opts)
+            except Exception as e:
+                err_msg = (str(e).split("\n")[0] or str(e))[:80]
+                _log("undetected_chromedriver failed (%s), using standard Chrome." % err_msg)
+                return (webdriver.Chrome(service=service, options=opts) if service else webdriver.Chrome(options=opts))
+        return (webdriver.Chrome(service=service, options=opts) if service else webdriver.Chrome(options=opts))
+
+    try:
+        driver = _create(options_fallback)
         _apply_stealth_cdp(driver)
         _log("Chrome started.")
-    return driver, pproxy_proc
+        return driver, pproxy_proc
+    except Exception as e:
+        err_str = str(e)
+        if proxy and "chrome instance exited" in err_str.lower():
+            if pproxy_proc:
+                _stop_pproxy(pproxy_proc)
+                pproxy_proc = None
+            _log("Chrome failed with proxy; retrying without proxy for this run...")
+            opts_no_proxy = _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=False, user_data_dir=user_data_dir)
+            if RUN_HEADLESS:
+                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chromedriver.log")
+                service = Service(log_output=log_path)
+                driver = webdriver.Chrome(service=service, options=opts_no_proxy)
+            else:
+                driver = webdriver.Chrome(options=opts_no_proxy)
+            _apply_stealth_cdp(driver)
+            _log("Chrome started (without proxy).")
+            return driver, None
+        if RUN_HEADLESS and "chrome instance exited" in err_str.lower():
+            _log("  Tip: check chromedriver.log in this folder for the exact Chrome error.")
+        raise
 
 
 def log_ip_used(driver):
