@@ -52,7 +52,10 @@ PROXY_FILE = "proxies_maroc.txt"
 # Faster navigation: shorter delays (less human-like, may trigger more CAPTCHAs). Set False to be safer.
 FASTER_NAVIGATION = True
 # Run Chrome headless (no window). Use True on VPS/servers without a display.
-RUN_HEADLESS = False
+# Override with env: RUN_HEADLESS=1 (e.g. in run_on_vps.sh). If unset and no DISPLAY on Linux, auto headless.
+RUN_HEADLESS = os.environ.get("RUN_HEADLESS", "").strip().lower() in ("1", "true", "yes")
+if not RUN_HEADLESS and sys.platform.startswith("linux") and not os.environ.get("DISPLAY"):
+    RUN_HEADLESS = True  # VPS / SSH: no display → force headless so Chrome doesn't exit
 # Search: Google only
 SEARCH_ENGINE = "google"
 # Use standard Chrome only (undetected_chromedriver often fails with proxy: "cannot connect to chrome at 127.0.0.1")

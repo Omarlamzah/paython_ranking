@@ -9,6 +9,9 @@ SCRIPT="selenium_search_nextpitalipadress loop.py"
 LOG="run_on_vps.log"
 PY="${PYTHON:-.venv/bin/python}"
 
+# Force headless so Chrome runs without a display (avoids "Chrome instance exited" on VPS)
+export RUN_HEADLESS=1
+
 if [ ! -x "$PY" ]; then
   echo "Python not found at $PY. Use: PYTHON=/path/to/python ./run_on_vps.sh"
   exit 1
