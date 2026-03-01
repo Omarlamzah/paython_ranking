@@ -1,6 +1,7 @@
 # ChromeDriver log (VPS debug)
 chromedriver.log
 
+ 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -115,9 +116,7 @@ celerybeat.pid
 *.sage.py
 
 # Secrets (do not push to GitHub)
-.2captcha_key
-proxies.txt
-proxies_maroc.txt
+
 
 # Environments
 .env

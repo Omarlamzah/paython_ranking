@@ -20,11 +20,12 @@ Requirements:
 Google flags: same device fingerprint, automation signals (Selenium), and sometimes IP.
 We already: rotate proxies, fresh Chrome profile per run, varied window/fingerprint, human delays.
 Further options:
-  1) Solve manually: when the script says "Solve it in the browser...", solve and press Enter.
-  2) CAPTCHA solver APIs: 2Captcha, CapSolver, Anti-Captcha can solve reCAPTCHA for a fee
-     (you'd need to integrate their API when CAPTCHA is detected).
-  3) Try Playwright instead of Selenium: often less detected (pip install playwright playwright-stealth).
-  4) Use a "Web Unblocker" / scraping API (e.g. Oxylabs) that handles blocks for you.
+  1) On VPS when audio gets "bot detected": use 2Captcha. Add key to .2captcha_key (or env CAPTCHA_2CAPTCHA_KEY);
+     script auto-uses 2Captcha when key is set. pip install requests.
+  2) Solve manually: when the script says "Solve it in the browser...", solve and press Enter.
+  3) Other CAPTCHA APIs: CapSolver, Anti-Captcha (would need integration).
+  4) Try Playwright instead of Selenium: often less detected (pip install playwright playwright-stealth).
+  5) Use a "Web Unblocker" / scraping API (e.g. Oxylabs) that handles blocks for you.
 """
 
 import os
@@ -66,15 +67,15 @@ USE_HTTPS_PROXY_UPSTREAM = False
 # If no proxies in file, fetch real proxy IPs from a free list (optional; quality varies)
 FETCH_FREE_PROXIES = False
 FREE_PROXY_COUNT = 10
-# 2Captcha: set to True only if you want to use the paid 2Captcha API. Otherwise disabled (no API calls).
-USE_2CAPTCHA = False
-# 2Captcha API key (only used when USE_2CAPTCHA is True): env CAPTCHA_2CAPTCHA_KEY or .2captcha_key file
+# 2Captcha: when key is set, use paid 2Captcha API when audio solver fails (e.g. "bot detected" on VPS).
+# Set to False to disable even if key exists. Key: env CAPTCHA_2CAPTCHA_KEY or .2captcha_key file.
 CAPTCHA_2CAPTCHA_KEY = os.environ.get("CAPTCHA_2CAPTCHA_KEY", "").strip()
 if not CAPTCHA_2CAPTCHA_KEY:
     _key_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".2captcha_key")
     if os.path.isfile(_key_path):
         with open(_key_path, "r") as _f:
             CAPTCHA_2CAPTCHA_KEY = _f.read().strip()
+USE_2CAPTCHA = bool(CAPTCHA_2CAPTCHA_KEY)
 
 # Audio reCAPTCHA solver (same approach as RecaptchaSolver: audio challenge + speech recognition)
 # Requires: pydub, SpeechRecognition, ffmpeg. Install with: pip install pydub SpeechRecognition
