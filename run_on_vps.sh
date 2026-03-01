@@ -14,6 +14,8 @@ if [ -z "$DISPLAY" ] && command -v xvfb-run &>/dev/null; then
 fi
 # Only force headless when there is no display (and we're not under xvfb)
 [ -z "$DISPLAY" ] && export RUN_HEADLESS=1
+# Don't wait 2 min on CAPTCHA when audio always fails (e.g. "bot detected" on VPS)
+export CAPTCHA_WAIT_TIMEOUT=0
 
 if [ ! -x "$PY" ]; then
   echo "Python not found at $PY. Use: PYTHON=/path/to/python ./run_on_vps.sh"

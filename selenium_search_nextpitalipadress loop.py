@@ -549,8 +549,16 @@ MAX_CAPTCHA_SOLVE_ATTEMPTS = 5
 CAPTCHA_RECHECK_WAIT_SEC = 2
 CAPTCHA_RECHECK_COUNT = 5   # total wait up to ~CAPTCHA_RECHECK_COUNT * CAPTCHA_RECHECK_WAIT_SEC for next captcha
 # When auto solvers fail: wait and retry solvers periodically (handles second captcha that loads after first solve)
+# Set to 0 to skip waiting (try audio once then continue to next run). Useful on VPS when audio gets "bot detected".
+# Override with env: CAPTCHA_WAIT_TIMEOUT=0 (e.g. in run_on_vps.sh)
 CAPTCHA_AUTO_WAIT_POLL_SEC = 3
 CAPTCHA_AUTO_WAIT_TIMEOUT_SEC = 120
+_captcha_timeout_env = os.environ.get("CAPTCHA_WAIT_TIMEOUT", "").strip()
+if _captcha_timeout_env != "":
+    try:
+        CAPTCHA_AUTO_WAIT_TIMEOUT_SEC = int(_captcha_timeout_env)
+    except ValueError:
+        pass
 CAPTCHA_RETRY_SOLVER_EVERY_SEC = 12   # while waiting, retry audio/2Captcha every N seconds
 
 
@@ -589,6 +597,10 @@ def _wait_for_google_captcha_solve(driver):
                     return None
                 continue
             _log("  2Captcha failed or unavailable.")
+        # When timeout is 0: don't wait, continue to next run (e.g. VPS where audio always "bot detected")
+        if CAPTCHA_AUTO_WAIT_TIMEOUT_SEC <= 0:
+            _log("CAPTCHA not solved. Skipping wait (timeout=0). Continuing to next run.")
+            return None
         # Wait and periodically retry solvers (so second captcha that loads later gets solved automatically)
         _log("Waiting for CAPTCHA (retrying solver every %ds, timeout %ds)..." % (CAPTCHA_RETRY_SOLVER_EVERY_SEC, CAPTCHA_AUTO_WAIT_TIMEOUT_SEC))
         deadline = time.time() + CAPTCHA_AUTO_WAIT_TIMEOUT_SEC
