@@ -57,7 +57,7 @@ RUN_HEADLESS = False
 SEARCH_ENGINE = "google"
 # Use standard Chrome only (undetected_chromedriver often fails with proxy: "cannot connect to chrome at 127.0.0.1")
 USE_STANDARD_CHROME = True
-# Use TLS to connect to proxy (http+ssl). Set False if you get ERR_SSL_PROTOCOL_ERROR (e.g. gate.decodo.com)
+# Use TLS to connect to proxy (http+ssl). For Webshare rotating endpoint use False (HTTP protocol).
 USE_HTTPS_PROXY_UPSTREAM = False
 # If no proxies in file, fetch real proxy IPs from a free list (optional; quality varies)
 FETCH_FREE_PROXIES = False
@@ -759,6 +759,8 @@ def main():
                             "err_tunnel_connection_failed" in err
                             or "err_proxy_connection_failed" in err
                             or "err_connection_refused" in err
+                            or "err_empty_response" in err
+                            or "err_ssl_protocol_error" in err
                             or "proxy" in err
                         )
                     )
