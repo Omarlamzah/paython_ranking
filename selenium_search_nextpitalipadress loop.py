@@ -264,6 +264,7 @@ def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True
         options.add_argument("--headless=new")
         options.add_argument("--disable-software-rasterizer")
         options.add_argument("--remote-debugging-port=0")
+        options.add_argument("--user-agent=Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
         w, h = 1920, 1080
     else:
         w, h = 1920 + random.randint(-30, 30), 1080 + random.randint(-20, 20)
@@ -334,8 +335,11 @@ def log_ip_used(driver):
             if ip and re.match(r"^[\d.]+\Z", ip):
                 _log("IP address used: %s" % ip)
                 return
-            if ip and len(ip) < 50 and "can't" not in ip.lower() and "error" not in ip.lower():
+            if ip and len(ip) < 50 and "can't" not in ip.lower() and "error" not in ip.lower() and "page" not in ip.lower() and "working" not in ip.lower():
                 _log("IP address used: %s" % ip)
+                return
+            if ip and ("page isn't working" in ip.lower() or "didn't send any data" in ip.lower() or "err_empty" in ip.lower()):
+                _log("IP address used: (proxy failed - ERR_EMPTY_RESPONSE; try next proxy or check proxy)")
                 return
         except Exception as e:
             err = str(e).split("\n")[0][:60]  # short message
