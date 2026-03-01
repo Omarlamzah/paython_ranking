@@ -250,23 +250,21 @@ def _apply_stealth_cdp(driver):
     try:
         cores = random.choice([4, 6, 8, 12])
         mem = random.choice([4, 8, 16])
+        # Wrap in try-catch so script never throws (avoids "JavaScript code failed" on some Chrome/VPS)
         script = """
-        Object.defineProperty(navigator, 'webdriver', { get: function() { return undefined; } });
-        window.chrome = { runtime: {}, loadTimes: function(){}, csi: function(){}, app: {} };
-        Object.defineProperty(navigator, 'plugins', {
-            get: function() {
-                var p = [1, 2, 3, 4, 5];
-                p.item = function(i) { return p[i] || null; };
-                p.namedItem = function() { return null; };
-                p.refresh = function() {};
-                return p;
+        (function() {
+          try {
+            if (Object.defineProperty && navigator) {
+              try { Object.defineProperty(navigator, 'webdriver', { get: function() { return undefined; }, configurable: true }); } catch(e) {}
+              try { Object.defineProperty(navigator, 'languages', { get: function() { return ['en-US', 'en']; }, configurable: true }); } catch(e) {}
+              try { Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; }, configurable: true }); } catch(e) {}
+              try { Object.defineProperty(navigator, 'hardwareConcurrency', { get: function() { return %d; }, configurable: true }); } catch(e) {}
+              try { Object.defineProperty(navigator, 'deviceMemory', { get: function() { return %d; }, configurable: true }); } catch(e) {}
+              try { Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; }, configurable: true }); } catch(e) {}
             }
-        });
-        Object.defineProperty(navigator, 'languages', { get: function() { return ['en-US', 'en']; } });
-        Object.defineProperty(navigator, 'platform', { get: function() { return 'Linux x86_64'; } });
-        Object.defineProperty(navigator, 'hardwareConcurrency', { get: function() { return %d; } });
-        Object.defineProperty(navigator, 'deviceMemory', { get: function() { return %d; } });
-        Object.defineProperty(navigator, 'maxTouchPoints', { get: function() { return 0; } });
+            if (typeof window !== 'undefined' && !window.chrome) window.chrome = { runtime: {}, app: {} };
+          } catch(e) {}
+        })();
         """ % (cores, mem)
         driver.execute_cdp_cmd("Page.addScriptToEvaluateOnNewDocument", {"source": script})
     except Exception as e:
@@ -798,7 +796,10 @@ def main():
             while True:
                 try:
                     driver, local_proxy = create_chrome_driver(proxy=proxy)
-                    driver.maximize_window()
+                    try:
+                        driver.maximize_window()
+                    except Exception:
+                        pass
                     log_ip_used(driver)
                     _log("Searching: %s" % KEYWORD)
                     found = run_one_search(driver, KEYWORD)
