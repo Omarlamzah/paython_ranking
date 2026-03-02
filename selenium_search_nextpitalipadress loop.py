@@ -2,14 +2,13 @@
 Selenium script: loop N times, each time search a keyword on Google,
 find Nextpital and click it. Each run can use a different proxy (IP).
 
-- Search: Google only. If Google shows CAPTCHA, script tries audio solver first, then optional 2Captcha (if key set).
+- Search: Google only. If Google shows CAPTCHA, script uses audio challenge + speech recognition (no API).
 - Proxies: put in proxies.txt or proxies_maroc.txt (http:// or socks5:// USER:PASS@HOST:PORT).
 - For proxies with auth we run pproxy as local proxy so Chrome sees no login dialog.
 
 Requirements:
   pip install selenium pproxy undetected-chromedriver
   For audio reCAPTCHA: pip install pydub SpeechRecognition — and install ffmpeg.
-  For 2Captcha on VPS (when audio gets "bot detected"): pip install requests, add key to .2captcha_key (see VPS_GUI.md).
   Chrome browser must be installed.
 
 --- Run automatically on a VPS (no screen) ---
@@ -18,7 +17,7 @@ Requirements:
   3. Run in background: nohup ./run_on_vps.sh &   (or use cron / systemd — see VPS.md)
 
 --- CAPTCHA on VPS ---
-Audio solver often gets "bot detected" on VPS. To make it work: (1) Add 2Captcha API key to .2captcha_key and add balance at 2captcha.com; or (2) Use VNC + desktop (VPS_GUI.md).
+Audio solver may get "bot detected" on headless VPS. Use VNC + desktop (VPS_GUI.md) for a real Chrome window.
 """
 
 import os
@@ -40,10 +39,21 @@ from selenium.webdriver.support import expected_conditions as EC
 
 # --- Config ---
 NUM_LOOPS = 10
-KEYWORD = "Logiciel pour médecins · Maroc"
+# One or more keywords; each run picks one at random. Add your own (one per line or comma-separated).
+KEYWORDS = [
+    "Logiciel pour médecins · Maroc",
+    "Logiciel médical cabinet médecin Maroc",
+    "Gestion cabinet médical Maroc",
+    "Logiciel santé Maroc",
+    "Nextpital médecin",
+    "Logiciel rendez-vous médecins Maroc",
+    "Solution logicielle médecins Maroc",
+]
+# Legacy: if you prefer a single fixed keyword, set USE_RANDOM_KEYWORD = False and set KEYWORD below.
+USE_RANDOM_KEYWORD = True
+KEYWORD = "Logiciel pour médecins · Maroc"  # used when USE_RANDOM_KEYWORD is False
+# Proxy file: "proxies_maroc.txt" (Decodo Morocco), "proxies_decodo.txt" (Decodo USA), or "proxies_empty.txt" (no proxy).
 PROXY_FILE = "proxies_maroc.txt"
-# For Morocco (Maroc) only: in Webshare dashboard allocate proxies to country MA, then
-# put Morocco proxy lines in proxies_maroc.txt and set PROXY_FILE = "proxies_maroc.txt"
 # Faster navigation: shorter delays (less human-like, may trigger more CAPTCHAs). Set False to be safer.
 FASTER_NAVIGATION = True
 # Run Chrome headless (no window). Use True on VPS/servers without a display.
@@ -60,22 +70,7 @@ USE_HTTPS_PROXY_UPSTREAM = False
 # If no proxies in file, fetch real proxy IPs from a free list (optional; quality varies)
 FETCH_FREE_PROXIES = False
 FREE_PROXY_COUNT = 10
-# 2Captcha (optional): when key is set, use it when audio solver fails. Key: env CAPTCHA_2CAPTCHA_KEY or .2captcha_key
-CAPTCHA_2CAPTCHA_KEY = os.environ.get("CAPTCHA_2CAPTCHA_KEY", "").strip()
-if not CAPTCHA_2CAPTCHA_KEY:
-    for _dir in (os.path.dirname(os.path.abspath(__file__)), os.getcwd()):
-        _key_path = os.path.join(_dir, ".2captcha_key")
-        if os.path.isfile(_key_path):
-            try:
-                with open(_key_path, "r", encoding="utf-8") as _f:
-                    CAPTCHA_2CAPTCHA_KEY = _f.read().strip()
-            except Exception:
-                pass
-            if CAPTCHA_2CAPTCHA_KEY:
-                break
-USE_2CAPTCHA = bool(CAPTCHA_2CAPTCHA_KEY)
-
-# Audio reCAPTCHA solver (audio challenge + speech recognition)
+# Audio reCAPTCHA solver (audio challenge + speech recognition only; no API)
 # Requires: pydub, SpeechRecognition, ffmpeg. Install with: pip install pydub SpeechRecognition
 try:
     from RecaptchaSolverSelenium import RecaptchaSolverSelenium
@@ -142,7 +137,7 @@ def fetch_free_proxies(count=10):
 
 # --- Local proxy via pproxy (handles upstream auth so Chrome sees no login dialog) ---
 def _proxy_url_for_pproxy(proxy_url):
-    """Convert http(s)/socks5 proxy URL to pproxy remote URI. pproxy supports http, http+ssl, socks5."""
+    """Convert to pproxy remote URI. pproxy expects auth in fragment: protocol://host:port#username:password (not user:pass@host)."""
     host_port, username, password = _parse_proxy(proxy_url)
     if not host_port or not username or not password:
         return None
@@ -154,6 +149,24 @@ def _proxy_url_for_pproxy(proxy_url):
     else:
         scheme = "http"
     return "%s://%s#%s:%s" % (scheme, host_port, username, password)
+
+
+def _test_tunnel_via_local_proxy(local_port, timeout=15):
+    """Test that traffic through 127.0.0.1:local_port reaches the internet (e.g. via upstream proxy)."""
+    try:
+        proxy_handler = urllib.request.ProxyHandler({
+            "http": "http://127.0.0.1:%s" % local_port,
+            "https": "http://127.0.0.1:%s" % local_port,
+        })
+        opener = urllib.request.build_opener(proxy_handler)
+        opener.open("https://ipv4.webshare.io/", timeout=timeout)
+        return True
+    except Exception as e:
+        err_str = str(e).split("\n")[0][:120]
+        _log("  Tunnel test failed: %s" % err_str)
+        if "WRONG_VERSION_NUMBER" in str(e) or "wrong version" in str(e).lower():
+            _log("  (Upstream proxy may have returned HTTP error 402/407; check Webshare balance and credentials.)")
+        return False
 
 
 def _start_pproxy(proxy_url):
@@ -175,11 +188,15 @@ def _start_pproxy(proxy_url):
             stderr=subprocess.PIPE,
             stdin=subprocess.DEVNULL,
         )
-        time.sleep(2.5)
+        time.sleep(3)
         if proc.poll() is not None:
             _, err = proc.communicate(timeout=1)
             err = (err or b"").decode("utf-8", errors="replace").strip() or "unknown"
             _log("pproxy exited: %s" % err[:200])
+            return None, None
+        # Verify tunnel works (same idea as requests through proxy)
+        if not _test_tunnel_via_local_proxy(port, timeout=20):
+            _stop_pproxy(proc)
             return None, None
         return proc, port
     except Exception as e:
@@ -314,12 +331,13 @@ def _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=True
                 options.add_argument("--proxy-server=127.0.0.1:%s" % pproxy_port)
                 _log("Using proxy: %s (via pproxy on port %s)" % (host_port, pproxy_port))
             elif username and password:
+                # pproxy_port should already be set by create_chrome_driver; this path is for direct callers
                 pproxy_proc, local_port = _start_pproxy(proxy)
                 if pproxy_proc and local_port:
                     options.add_argument("--proxy-server=127.0.0.1:%s" % local_port)
                     _log("Using proxy: %s (via pproxy on port %s)" % (host_port, local_port))
                 else:
-                    _log("pproxy failed, running without proxy for this run.")
+                    raise RuntimeError("Proxy required but pproxy failed to start.")
             else:
                 options.add_argument("--proxy-server=http://%s" % host_port)
                 _log("Using proxy: %s" % host_port)
@@ -337,6 +355,8 @@ def create_chrome_driver(proxy=None):
         host_port, username, password = _parse_proxy(proxy)
         if host_port and username and password:
             pproxy_proc, pproxy_port = _start_pproxy(proxy)
+            if not pproxy_port:
+                raise RuntimeError("Proxy required but pproxy failed to start. Check proxy URL: use http://user:pass@host:port or socks5://user:pass@host:port in proxy file.")
     # Fresh profile per run: no cookies, no history — each run looks like a new device/session
     user_data_dir = tempfile.mkdtemp(prefix="chrome_run_")
     options_fallback = _build_chrome_options(proxy=proxy, pproxy_port=pproxy_port, add_stealth_options=False, user_data_dir=user_data_dir)
@@ -365,21 +385,10 @@ def create_chrome_driver(proxy=None):
         return driver, pproxy_proc
     except Exception as e:
         err_str = str(e)
+        if proxy and pproxy_proc:
+            _stop_pproxy(pproxy_proc)
         if proxy and "chrome instance exited" in err_str.lower():
-            if pproxy_proc:
-                _stop_pproxy(pproxy_proc)
-                pproxy_proc = None
-            _log("Chrome failed with proxy; retrying without proxy for this run...")
-            opts_no_proxy = _build_chrome_options(proxy=None, pproxy_port=None, add_stealth_options=False, user_data_dir=user_data_dir)
-            if RUN_HEADLESS:
-                log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "chromedriver.log")
-                service = Service(log_output=log_path)
-                driver = webdriver.Chrome(service=service, options=opts_no_proxy)
-            else:
-                driver = webdriver.Chrome(options=opts_no_proxy)
-            _apply_stealth_cdp(driver)
-            _log("Chrome started (without proxy).")
-            return driver, None
+            _log("Chrome failed with proxy. Proxy is required; not retrying without proxy.")
         if RUN_HEADLESS and "chrome instance exited" in err_str.lower():
             _log("  Tip: check chromedriver.log in this folder for the exact Chrome error.")
         raise
@@ -434,106 +443,26 @@ def _is_google_captcha_page(driver):
         return False
 
 
-def _get_recaptcha_sitekey_from_page(driver):
-    """Try to extract reCAPTCHA site key from current page (data-sitekey or k= in scripts)."""
-    try:
-        html = driver.page_source or ""
-        m = re.search(r'data-sitekey\s*=\s*["\']([a-zA-Z0-9_-]{20,})["\']', html, re.I)
-        if m:
-            return m.group(1)
-        m = re.search(r'["\'](6L[a-zA-Z0-9_-]{38,})["\']', html)
-        if m:
-            return m.group(1)
-        m = re.search(r'sitekey["\']?\s*[:=]\s*["\']([^"\']+)["\']', html, re.I)
-        if m:
-            return m.group(1)
-    except Exception:
-        pass
-    return None
-
-
-def _solve_captcha_2captcha(driver):
-    """Use 2Captcha API to get reCAPTCHA token and inject it. Returns True if solved."""
-    try:
-        import requests as _req
-    except ImportError:
-        return False
-    key = (CAPTCHA_2CAPTCHA_KEY or "").strip()
-    if not key:
-        return False
-    url = driver.current_url or ""
-    if "google.com" not in url:
-        return False
-    sitekey = _get_recaptcha_sitekey_from_page(driver)
-    if not sitekey:
-        _log("  2Captcha: could not find reCAPTCHA site key on page.")
-        return False
-    _log("  2Captcha: sending CAPTCHA to solver (sitekey=%s...)." % sitekey[:12])
-    create = _req.post(
-        "https://api.2captcha.com/createTask",
-        json={
-            "clientKey": key,
-            "task": {
-                "type": "RecaptchaV2TaskProxyless",
-                "websiteURL": url,
-                "websiteKey": sitekey,
-            },
-        },
-        timeout=30,
-    ).json()
-    if create.get("errorId") != 0:
-        _log("  2Captcha createTask error: %s" % create.get("errorDescription", create))
-        return False
-    task_id = create.get("taskId")
-    if not task_id:
-        return False
-    for _ in range(24):
-        time.sleep(5)
-        result = _req.post(
-            "https://api.2captcha.com/getTaskResult",
-            json={"clientKey": key, "taskId": task_id},
-            timeout=30,
-        ).json()
-        if result.get("errorId") != 0:
-            _log("  2Captcha getTaskResult error: %s" % result.get("errorDescription", result))
-            return False
-        if result.get("status") == "ready":
-            token = (result.get("solution") or {}).get("gRecaptchaResponse") or (result.get("solution") or {}).get("token")
-            if not token:
-                return False
-            _log("  2Captcha: got token, injecting...")
-            try:
-                driver.execute_script("""
-                    var token = arguments[0];
-                    var textarea = document.getElementById('g-recaptcha-response') || document.querySelector('[name="g-recaptcha-response"]');
-                    if (textarea) { textarea.innerHTML = token; textarea.value = token; }
-                    var f = document.querySelector('form');
-                    if (f) f.submit();
-                """, token)
-            except Exception as e:
-                _log("  2Captcha inject error: %s" % (str(e)[:50]))
-            time.sleep(2)
-            return True
-        if result.get("status") == "processing":
-            continue
-        break
-    _log("  2Captcha: timeout waiting for solution.")
-    return False
-
-
 def _solve_captcha_audio(driver):
-    """Try to solve reCAPTCHA via audio challenge + speech recognition (same way as RecaptchaSolver). Returns True if solved."""
+    """Solve reCAPTCHA via audio challenge + speech recognition only (no API). Returns True if solved."""
     if not AUDIO_CAPTCHA_AVAILABLE or RecaptchaSolverSelenium is None:
+        _log("  Audio CAPTCHA solver: not available (install pydub, SpeechRecognition, ffmpeg).")
         return False
     try:
+        _log("  Audio solver: using speech recognition (no API)...")
         solver = RecaptchaSolverSelenium(driver, log_fn=_log)
         if solver.solve_captcha():
-            _log("  Audio CAPTCHA solver: solved.")
+            txt = getattr(solver, "recognized_text", None)
+            if txt:
+                _log("  CAPTCHA solved (audio). Recognized text: \"%s\"" % txt)
+            else:
+                _log("  CAPTCHA solved (audio).")
             return True
-        if getattr(solver, "last_error", None):
-            _log("  Audio CAPTCHA solver: %s" % solver.last_error)
+        err = getattr(solver, "last_error", None)
+        if err:
+            _log("  Audio solver failed: %s" % err)
     except Exception as e:
-        _log("  Audio CAPTCHA solver: %s" % (str(e)[:80]))
+        _log("  Audio solver error: %s" % (str(e)[:80]))
     return False
 
 
@@ -542,7 +471,7 @@ MAX_CAPTCHA_SOLVE_ATTEMPTS = 5
 # After solving one, wait and re-check for another captcha (Google often loads a second one with a delay)
 CAPTCHA_RECHECK_WAIT_SEC = 2
 CAPTCHA_RECHECK_COUNT = 5   # total wait up to ~CAPTCHA_RECHECK_COUNT * CAPTCHA_RECHECK_WAIT_SEC for next captcha
-# When auto solvers fail: wait and retry solvers periodically (handles second captcha that loads after first solve)
+# When audio solver fails: wait and retry periodically (handles second captcha that loads after first solve)
 # Set to 0 to skip waiting (try audio once then continue to next run). Useful on VPS when audio gets "bot detected".
 # Override with env: CAPTCHA_WAIT_TIMEOUT=0 (e.g. in run_on_vps.sh)
 CAPTCHA_AUTO_WAIT_POLL_SEC = 3
@@ -553,7 +482,7 @@ if _captcha_timeout_env != "":
         CAPTCHA_AUTO_WAIT_TIMEOUT_SEC = int(_captcha_timeout_env)
     except ValueError:
         pass
-CAPTCHA_RETRY_SOLVER_EVERY_SEC = 12   # while waiting, retry audio/2Captcha every N seconds
+CAPTCHA_RETRY_SOLVER_EVERY_SEC = 12   # while waiting, retry audio solver every N seconds
 
 
 def _wait_for_possible_second_captcha(driver):
@@ -568,33 +497,29 @@ def _wait_for_possible_second_captcha(driver):
 
 
 def _wait_for_google_captcha_solve(driver):
-    """If Google shows CAPTCHA, try audio solver then 2Captcha (if key set); then wait/retry until captcha is gone."""
+    """If Google shows CAPTCHA, try audio solver (speech recognition); wait/retry until captcha is gone."""
     for attempt in range(1, MAX_CAPTCHA_SOLVE_ATTEMPTS + 1):
         if not _is_google_captcha_page(driver):
             return None
         if attempt > 1:
             _log("Another CAPTCHA detected (attempt %d/%d). Solving again..." % (attempt, MAX_CAPTCHA_SOLVE_ATTEMPTS))
         if AUDIO_CAPTCHA_AVAILABLE:
-            _log("Google CAPTCHA detected. Trying audio solver (reCAPTCHA audio challenge)...")
+            _log("Google CAPTCHA detected. Trying audio solver (reCAPTCHA audio challenge + speech recognition)...")
             if _solve_captcha_audio(driver):
                 _log("  Waiting for page to reload...")
                 if not _wait_for_possible_second_captcha(driver):
                     return None
                 continue
-            _log("  Audio solver failed or not available. Trying next option.")
-        if USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
-            _log("Google CAPTCHA detected. Trying 2Captcha...")
-            if _solve_captcha_2captcha(driver):
-                _log("  2Captcha solved. Waiting for page to reload...")
-                if not _wait_for_possible_second_captcha(driver):
-                    return None
-                continue
-            _log("  2Captcha failed or unavailable.")
+            # If solver failed but CAPTCHA page is gone (e.g. iframe not found on retry = page moved on), continue
+            if not _is_google_captcha_page(driver):
+                _log("  CAPTCHA page gone; continuing.")
+                return None
+            _log("  Audio solver failed (no API fallback; only speech recognition is used).")
         # When timeout is 0: don't wait, continue to next run
         if CAPTCHA_AUTO_WAIT_TIMEOUT_SEC <= 0:
             _log("CAPTCHA not solved. Skipping wait (timeout=0). Continuing to next run.")
             return None
-        _log("Waiting for CAPTCHA (retrying every %ds, timeout %ds)..." % (CAPTCHA_RETRY_SOLVER_EVERY_SEC, CAPTCHA_AUTO_WAIT_TIMEOUT_SEC))
+        _log("Waiting for CAPTCHA (retrying audio every %ds, timeout %ds)..." % (CAPTCHA_RETRY_SOLVER_EVERY_SEC, CAPTCHA_AUTO_WAIT_TIMEOUT_SEC))
         deadline = time.time() + CAPTCHA_AUTO_WAIT_TIMEOUT_SEC
         last_solver_try = 0
         solved_during_wait = False
@@ -607,10 +532,8 @@ def _wait_for_google_captcha_solve(driver):
                     if _solve_captcha_audio(driver):
                         solved_during_wait = True
                         break
-                if not solved_during_wait and USE_2CAPTCHA and CAPTCHA_2CAPTCHA_KEY:
-                    _log("  Retrying 2Captcha...")
-                    if _solve_captcha_2captcha(driver):
-                        solved_during_wait = True
+                    if not _is_google_captcha_page(driver):
+                        _log("  CAPTCHA page gone; continuing.")
                         break
             time.sleep(CAPTCHA_AUTO_WAIT_POLL_SEC)
         if solved_during_wait:
@@ -686,7 +609,8 @@ def search_google(driver, query):
     _delay_after_google_load()
     _wait_for_google_captcha_solve(driver)
     _log("Typing search query...")
-    search_box = WebDriverWait(driver, 12).until(
+    # Longer timeout when using proxy (slower page load)
+    search_box = WebDriverWait(driver, 25).until(
         EC.element_to_be_clickable((By.NAME, "q"))
     )
     _human_mouse_to(driver, search_box)
@@ -794,7 +718,6 @@ def main():
             proxy = proxies[(run - 1) % len(proxies)] if proxies else None
             driver = None
             local_proxy = None
-            retried_without_proxy = False
             while True:
                 try:
                     driver, local_proxy = create_chrome_driver(proxy=proxy)
@@ -803,8 +726,9 @@ def main():
                     except Exception:
                         pass
                     log_ip_used(driver)
-                    _log("Searching: %s" % KEYWORD)
-                    found = run_one_search(driver, KEYWORD)
+                    keyword = random.choice(KEYWORDS) if USE_RANDOM_KEYWORD else KEYWORD
+                    _log("Searching: %s" % keyword)
+                    found = run_one_search(driver, keyword)
                     if found:
                         time.sleep(3 if FASTER_NAVIGATION else 5)
                     else:
@@ -817,7 +741,6 @@ def main():
                     err = str(e).lower()
                     is_proxy_error = (
                         proxy
-                        and not retried_without_proxy
                         and (
                             "err_tunnel_connection_failed" in err
                             or "err_proxy_connection_failed" in err
@@ -828,7 +751,7 @@ def main():
                         )
                     )
                     if is_proxy_error:
-                        _log("  Proxy failed, retrying this run without proxy...")
+                        _log("  Proxy failed. Proxy is required; skipping this run. (Error: %s)" % (str(e).split("\n")[0][:120]))
                         if local_proxy:
                             _stop_pproxy(local_proxy)
                             local_proxy = None
@@ -838,10 +761,16 @@ def main():
                             except Exception:
                                 pass
                             driver = None
-                        proxy = None
-                        retried_without_proxy = True
-                        continue
-                    err_short = (str(e).split("\n")[0] or str(e))[:100]
+                        break
+                    # Selenium exceptions often have empty str(); use msg, class name, and full repr
+                    err_msg = getattr(e, "msg", None) or str(e)
+                    if not err_msg or err_msg.strip() == "":
+                        err_msg = getattr(e, "response", None)
+                        if hasattr(err_msg, "get") and isinstance(err_msg, dict):
+                            err_msg = err_msg.get("value", {}).get("message") or str(e)
+                        else:
+                            err_msg = str(err_msg) if err_msg else type(e).__name__
+                    err_short = (type(e).__name__ + ": " + str(err_msg).strip()).split("\n")[0][:200]
                     _log("  Error: %s" % err_short)
                     break
                 finally:

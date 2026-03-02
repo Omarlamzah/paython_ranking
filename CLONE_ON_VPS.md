@@ -60,17 +60,7 @@ Then run the script with: `PYTHON=python3 ./run_on_vps.sh`
 
 ## reCAPTCHA on VPS: "Try again later (bot detected)"
 
-On a headless VPS, Google often blocks the **audio** challenge and shows "Try again later". The **reliable fix** is to use **2Captcha** (paid API) so the script can get a token even when the audio path is blocked.
-
-**On the VPS**, create the API key file (use your real 2Captcha key from https://2captcha.com):
-
-```bash
-cd ~/paython_ranking
-echo "YOUR_2CAPTCHA_API_KEY" > .2captcha_key
-chmod 600 .2captcha_key
-```
-
-Then run `./run_on_vps.sh` again. When the audio solver fails, the script will try 2Captcha and inject the token. Without a key, the script can only wait and retry (often still "Try again later" on headless).
+On a headless VPS, Google often blocks the **audio** challenge and shows "Try again later". The script uses **audio + speech recognition only** (no CAPTCHA API). For a more reliable fix, use **VNC + desktop** so Chrome runs in a real window (see `VPS_GUI.md`).
 
 ---
 

@@ -115,9 +115,6 @@ celerybeat.pid
 # SageMath parsed files
 *.sage.py
 
-# Secrets (do not push to GitHub)
-
-
 # Environments
 .env
 .venv

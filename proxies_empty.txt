@@ -1,0 +1,2 @@
+# No proxies: script will use the machine's own IP (e.g. VPS IP = unlimited, no proxy cost).
+# Leave this file with no proxy lines, or set PROXY_FILE = "proxies_empty.txt" in the script.

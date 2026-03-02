@@ -133,8 +133,6 @@ sudo journalctl -u nextpital-search -f
 - `proxies_maroc.txt` (or your proxy file)
 - `.venv` with dependencies
 
-Optional: `.2captcha_key` if you use 2Captcha.
-
 ## Notes
 
 - **VPS has no Chrome by default** — run `setup_vps.sh` (or install Chrome/Chromium manually) so the script can do the same search as on your laptop.
